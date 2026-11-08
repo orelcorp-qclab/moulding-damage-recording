@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Orel Corporation – Moulding Damage Recording System</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!--
+FIRESTORE RULES (paste in Firebase Console > Firestore > Rules). Roles live in users/{uid} = {role:"admin"|"employee"}; create those docs by hand in the console.
+
+rules_version = '2';
+service cloud.firestore { match /databases/{db}/documents {
+  function signed(){ return request.auth != null; }
+  function role(){ return get(/databases/$(db)/documents/users/$(request.auth.uid)).data.role; }
+  function isAdmin(){ return signed() && role() == 'admin'; }
+  function isEmp(){ return signed() && role() in ['admin','employee']; }
+  match /users/{u} { allow read: if signed() && (request.auth.uid == u || isAdmin()); allow write: if false; }
+  match /moulding_damage_records/{r} {
+    allow read: if isEmp();
+    allow create: if isEmp() && request.resource.data.uid == request.auth.uid
+      && request.resource.data.scrapQty is int && request.resource.data.scrapQty >= 0;
+    allow update, delete: if isAdmin();
+  }
+  match /audit_trail/{a} { allow read: if isAdmin(); allow create: if isEmp(); allow update, delete: if false; }
+  match /{coll}/{d} {
+    allow read: if isEmp() && coll in ['items','materials','shifts','machines','vc_ratios'];
+    allow write: if isAdmin() && coll in ['items','materials','shifts','machines','vc_ratios'];
+  }
+}}
+-->
+<style>
+:root{--navy:#0b2447;--navy2:#19376d;--blue:#2563eb;--bg:#f1f4f9;--bd:#d9e0ec;--tx:#1b2433;--mut:#5d6b82;--ok:#157347;--err:#b42318;--warn:#b7791f}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;font:15px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;background:var(--bg);color:var(--tx)}
+h1,h2,h3{margin:0;color:var(--navy)}h2{font-size:20px;margin-bottom:12px}h3{font-size:15px;margin-bottom:8px}
+input,select,button{font:inherit}
+input,select{width:100%;min-height:46px;padding:8px 10px;border:1px solid var(--bd);border-radius:6px;background:#fff;font-size:16px}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+label{display:block;font-size:13px;font-weight:600;color:var(--mut);margin-bottom:4px}
+.btn{min-height:44px;padding:8px 16px;border:0;border-radius:6px;background:var(--blue);color:#fff;font-weight:600;cursor:pointer}
+.btn.sec{background:#fff;color:var(--navy);border:1px solid var(--bd)}.btn.red{background:var(--err)}.btn:disabled{opacity:.6;cursor:wait}
+.btn.sm{min-height:36px;padding:4px 10px;font-size:13px}
+#login{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--navy);padding:16px}
+.lbox{background:#fff;border-radius:10px;padding:28px;width:100%;max-width:380px}.lbox h1{font-size:19px;margin-bottom:4px}
+#app{display:flex;min-height:100vh}
+#side{width:250px;background:var(--navy);color:#fff;position:fixed;inset:0 auto 0 0;display:flex;flex-direction:column;z-index:20;transition:transform .2s}
+.brand{padding:18px 16px;font-weight:700;border-bottom:1px solid #ffffff22;line-height:1.25}.brand small{display:block;font-weight:400;opacity:.7}
+#side a{display:flex;gap:10px;align-items:center;padding:13px 16px;color:#cfd9ee;text-decoration:none;cursor:pointer;min-height:48px}
+#side a:hover{background:var(--navy2)}#side a.on{background:var(--blue);color:#fff}#side i{width:18px;text-align:center}
+.mainw{margin-left:250px;flex:1;min-width:0}
+header{background:#fff;border-bottom:1px solid var(--bd);padding:10px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10;padding-top:calc(10px + env(safe-area-inset-top,0px))}
+header .u{margin-left:auto;font-size:13px;color:var(--mut);text-align:right}#burger{display:none}
+main{padding:16px;max-width:1300px}
+.card{background:#fff;border:1px solid var(--bd);border-radius:8px;padding:16px;margin-bottom:16px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.stat{background:#fff;border:1px solid var(--bd);border-left:4px solid var(--blue);border-radius:8px;padding:12px}
+.stat b{display:block;font-size:22px;color:var(--navy);overflow-wrap:anywhere}.stat span{font-size:12px;color:var(--mut)}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:9px 10px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}th{background:#eaf0fa;color:var(--navy);cursor:default}
+th[data-a=sort]{cursor:pointer}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.pill{padding:2px 8px;border-radius:99px;font-size:12px;background:#e3f4ea;color:var(--ok)}.pill.off{background:#fde8e6;color:var(--err)}
+.msg{padding:10px 12px;border-radius:6px;margin:10px 0;font-size:14px}.msg.ok{background:#e3f4ea;color:var(--ok)}.msg.err{background:#fde8e6;color:var(--err)}
+.fg{display:grid;gap:12px;grid-template-columns:1fr}.charts{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.cv{position:relative;height:260px}
+#toast{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 18px;border-radius:6px;z-index:50;max-width:90%}
+@media(min-width:700px){.fg{grid-template-columns:1fr 1fr}.fg.f3{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:900px){#side{transform:translateX(-100%)}#side.open{transform:none}.mainw{margin-left:0}#burger{display:inline-block}}
+@media print{#side,header,.noprint{display:none!important}.mainw{margin:0}body{background:#fff}.card{border:0}}
+</style></head><body>
+<div id="login"><form class="lbox" id="lf">
+ <h1>Orel Corporation</h1><p style="margin:0 0 16px;color:var(--mut)">Moulding Damage Recording System</p>
+ <label for="le">Email</label><input id="le" type="email" required autocomplete="username">
+ <label for="lp" style="margin-top:10px">Password</label><input id="lp" type="password" required autocomplete="current-password">
+ <div id="lm" class="msg err" hidden></div>
+ <button class="btn" style="width:100%;margin-top:14px" type="submit">Sign in</button></form></div>
+<div id="app" hidden>
+ <aside id="side"><div class="brand"><i class="fa-solid fa-industry"></i> Orel Corporation<small>Moulding Damage Recording</small></div><nav id="nav"></nav></aside>
+ <div class="mainw"><header><button class="btn sec sm" id="burger" aria-label="Menu"><i class="fa-solid fa-bars"></i></button><h1 id="ttl"></h1><div class="u" id="who"></div></header><main id="main"></main></div>
+</div><div id="toast" hidden></div>
+
+<script type="module">
+/* ============ 1. FIREBASE CONFIG – replace with your own project values ============ */
+const firebaseConfig = {
+  apiKey: "AIzaSyDvvVNPAm35lhSFqbnjZutLtwDqvTu5psQ",
+  authDomain: "moulding-damage-recording.firebaseapp.com",
+  projectId: "moulding-damage-recording",
+  storageBucket: "moulding-damage-recording.firebasestorage.app",
+  messagingSenderId: "108705148055",
+  appId: "1:108705148055:web:1178d343d7901c9f32cdd2"
+};
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {getFirestore,collection,doc,getDoc,onSnapshot,query,orderBy,limit,serverTimestamp,writeBatch} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
+
+/* ============ 2. STATE & HELPERS ============ */
+const REC='moulding_damage_records';
+const M={items:{t:'Items',code:1},materials:{t:'Materials',code:1},shifts:{t:'Shifts'},machines:{t:'Machines (Machine No.)'},vc_ratios:{t:'V/C Ratios'}};
+const S={user:null,role:null,recs:[],audit:[],md:{items:[],materials:[],shifts:[],machines:[],vc_ratios:[]},view:'dashboard',page:1,sort:{k:'date',d:-1},editId:null,saving:false};
+let F={},charts=[],unsubs=[];
+const NAV=[['dashboard','Dashboard','fa-gauge'],['entry','Record Moulding Damage','fa-pen-to-square'],['records','Moulding Damage Records','fa-table-list'],['analysis','Damage Analysis & Reports','fa-chart-column'],['admin','Admin Data & Settings','fa-gear',1],['audit','Admin Audit Trail','fa-clipboard-list',1]];
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const lbl=x=>x.code?x.code+' – '+x.name:x.name;
+const isAdmin=()=>S.role==='admin';
+const nat=(a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true});
+function toast(t){const e=$('#toast');e.textContent=t;e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>e.hidden=true,3000)}
+function msg(t,ok){const m=$('#msg');if(m){m.className='msg '+(ok?'ok':'err');m.textContent=t;m.hidden=false}}
+const fail=e=>{console.error(e);toast('Error: '+(e.code||e.message))};
+/* Audit entry added to the same atomic batch as the change */
+function audit(b,action,recordId,prev,next){b.set(doc(collection(db,'audit_trail')),{userId:S.user.uid,userEmail:S.user.email,action,recordId:recordId||'',previous:prev?JSON.stringify(prev):'',updated:next?JSON.stringify(next):'',at:serverTimestamp()})}
+const clean=r=>{const o={...r};delete o.createdAt;delete o.updatedAt;return o};
+
+/* ============ 3. AUTH ============ */
+$('#lf').addEventListener('submit',async e=>{e.preventDefault();$('#lm').hidden=true;
+ try{await signInWithEmailAndPassword(auth,$('#le').value.trim(),$('#lp').value)}
+ catch(x){$('#lm').textContent='Sign-in failed: check email and password.';$('#lm').hidden=false}});
+onAuthStateChanged(auth,async u=>{
+ unsubs.forEach(f=>f());unsubs=[];
+ if(!u){S.user=null;$('#app').hidden=true;$('#login').hidden=false;return}
+ try{const r=await getDoc(doc(db,'users',u.uid));
+  if(!r.exists()||!['admin','employee'].includes(r.data().role)){await signOut(auth);$('#lm').textContent='No role assigned to this account. Contact the administrator.';$('#lm').hidden=false;return}
+  S.user=u;S.role=r.data().role;
+ }catch(x){await signOut(auth);$('#lm').textContent='Cannot read user role: '+x.code;$('#lm').hidden=false;return}
+ $('#login').hidden=true;$('#app').hidden=false;
+ $('#who').innerHTML=esc(u.email)+'<br>'+(isAdmin()?'Administrator':'Employee');
+ $('#nav').innerHTML=NAV.filter(n=>!n[3]||isAdmin()).map(n=>`<a data-v="${n[0]}"><i class="fa-solid ${n[2]}"></i>${n[1]}</a>`).join('')+'<a data-a="logout"><i class="fa-solid fa-right-from-bracket"></i>Logout</a>';
+ Object.keys(M).forEach(c=>unsubs.push(onSnapshot(collection(db,c),s=>{S.md[c]=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>nat(lbl(a),lbl(b)));if(S.view==='admin'||S.view==='entry'&&!S.saving)render()},fail)));
+ unsubs.push(onSnapshot(query(collection(db,REC),orderBy('date','desc')),s=>{S.recs=s.docs.map(d=>({id:d.id,...d.data()}));refresh()},fail));
+ if(isAdmin())unsubs.push(onSnapshot(query(collection(db,'audit_trail'),orderBy('at','desc'),limit(300)),s=>{S.audit=s.docs.map(d=>({id:d.id,...d.data()}));if(S.view==='audit')render()},fail));
+ go('dashboard');
+});
+
+/* ============ 4. NAVIGATION & RENDER ============ */
+function go(v){const n=NAV.find(x=>x[0]===v);if(n&&n[3]&&!isAdmin())v='dashboard';S.view=v;S.page=1;if(v!=='entry')S.editId=null;$('#side').classList.remove('open');render()}
+function render(){
+ charts.forEach(c=>c.destroy());charts=[];
+ document.querySelectorAll('#nav a[data-v]').forEach(a=>a.classList.toggle('on',a.dataset.v===S.view));
+ $('#ttl').textContent=(NAV.find(n=>n[0]===S.view)||[])[1]||'';
+ const m=$('#main');
+ if(['dashboard','records','analysis'].includes(S.view)){m.innerHTML=fbar()+'<div id="res"></div>';paint()}
+ else m.innerHTML={entry:vEntry,admin:vAdmin,audit:vAudit}[S.view]();
+}
+function refresh(){if($('#res'))paint();else if(S.view==='admin'||S.view==='audit')render()}
+
+/* ============ 5. FILTERS ============ */
+const names=c=>S.md[c].map(lbl);
+function fbar(){
+ const o=(k,l,c)=>`<div><label>${l}</label><select data-f="${k}"><option value="">All</option>${names(c).map(x=>`<option ${F[k]===x?'selected':''}>${esc(x)}</option>`).join('')}</select></div>`;
+ return `<div class="card noprint"><div class="fg f3"><div><label>From date</label><input type="date" data-f="from" value="${F.from||''}"></div><div><label>To date</label><input type="date" data-f="to" value="${F.to||''}"></div>
+ ${o('machine','Machine No.','machines')}${o('shift','Shift','shifts')}${o('item','Item','items')}${o('material','Material','materials')}${o('vc','V/C Ratio','vc_ratios')}
+ ${S.view==='records'?`<div><label>Search item / machine / material</label><input type="search" data-f="q" value="${esc(F.q||'')}"></div>`:''}</div>
+ <div class="row" style="margin-top:10px"><button class="btn sec sm" data-a="fclr">Clear filters</button></div></div>`}
+function filt(){const q=(F.q||'').toLowerCase();return S.recs.filter(r=>(!F.from||r.date>=F.from)&&(!F.to||r.date<=F.to)&&(!F.machine||r.machineNo===F.machine)&&(!F.shift||r.shift===F.shift)&&(!F.item||r.item===F.item)&&(!F.material||r.material===F.material)&&(!F.vc||r.vcRatio===F.vc)&&(!q||[r.item,r.machineNo,r.material].some(x=>String(x).toLowerCase().includes(q))))}
+function sumBy(d,k){const o={};d.forEach(r=>o[r[k]]=(o[r[k]]||0)+r.scrapQty);return Object.entries(o).sort((a,b)=>b[1]-a[1])}
+function paint(){const r=$('#res');if(!r)return;charts.forEach(c=>c.destroy());charts=[];({dashboard:pDash,records:pRec,analysis:pAna})[S.view](r,filt())}
+
+/* ============ 6. DASHBOARD ============ */
+function pDash(r,d){
+ const t=fmt(new Date()),mo=t.slice(0,7),sum=a=>a.reduce((s,x)=>s+x.scrapQty,0);
+ const ti=sumBy(d,'item')[0],tm=sumBy(d,'machineNo')[0];
+ const c=(l,v)=>`<div class="stat"><span>${l}</span><b>${esc(v)}</b></div>`;
+ r.innerHTML=`<div class="grid">${c('Total Scrap Quantity',sum(d))}${c('Total Scrap Records',d.length)}${c('Scrap Quantity Today',sum(d.filter(x=>x.date===t)))}${c('Scrap Quantity This Month',sum(d.filter(x=>x.date.startsWith(mo))))}${c('Highest Scrap Item',ti?`${ti[0]} (${ti[1]})`:'–')}${c('Highest Scrap Machine',tm?`${tm[0]} (${tm[1]})`:'–')}</div>
+ <p style="color:var(--mut);font-size:13px">Figures reflect the selected filters. Scrap Qty is a recorded quantity, not a scrap rate.</p>`}
+
+/* ============ 7. RECORD ENTRY ============ */
+function vEntry(){
+ const e=S.editId?S.recs.find(x=>x.id===S.editId):null;
+ const op=(c,cur)=>{let a=S.md[c].filter(x=>x.status==='active').map(lbl);if(cur&&!a.includes(cur))a.push(cur);return '<option value="">Select…</option>'+a.map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join('')};
+ const sel=(n,l,c,cur)=>`<div><label for="e_${n}">${l} *</label><select id="e_${n}" name="${n}" required>${op(c,cur)}</select></div>`;
+ return `<form class="card" id="ef" style="max-width:720px" novalidate><h2>${e?'Edit record':'New moulding damage record'}</h2>
+ <div class="fg"><div><label for="e_date">Date *</label><input id="e_date" name="date" type="date" required value="${e?e.date:fmt(new Date())}"></div>
+ ${sel('machine','Machine No.','machines',e&&e.machineNo)}${sel('shift','Shift','shifts',e&&e.shift)}${sel('item','Item','items',e&&e.item)}${sel('material','Material','materials',e&&e.material)}
+ <div><label for="e_qty">Scrap Qty *</label><input id="e_qty" name="qty" type="number" inputmode="numeric" min="0" step="1" required value="${e?e.scrapQty:''}"></div>
+ ${sel('vc','V/C Ratio','vc_ratios',e&&e.vcRatio)}</div><div id="msg" class="msg" hidden></div>
+ <div class="row" style="margin-top:14px"><button class="btn" type="submit" style="flex:1">${e?'Update record':'Save record'}</button><button class="btn sec" type="button" data-a="reset">${e?'Cancel':'Clear form'}</button></div></form>`}
+async function saveRec(f){
+ if(S.saving)return;
+ const d={date:f.date.value,machineNo:f.machine.value,shift:f.shift.value,item:f.item.value,material:f.material.value,vcRatio:f.vc.value};
+ const er=[];if(!d.date)er.push('Date');if(!d.machineNo)er.push('Machine No.');if(!d.shift)er.push('Shift');if(!d.item)er.push('Item');if(!d.material)er.push('Material');if(!d.vcRatio)er.push('V/C Ratio');
+ if(er.length)return msg('Please complete: '+er.join(', '),0);
+ if(!/^\d+$/.test(f.qty.value.trim()))return msg('Scrap Qty must be a whole number, 0 or more.',0);
+ d.scrapQty=parseInt(f.qty.value,10);
+ const btn=f.querySelector('[type=submit]');S.saving=true;btn.disabled=true;
+ try{const b=writeBatch(db);
+  if(S.editId){const ref=doc(db,REC,S.editId),prev=clean(S.recs.find(x=>x.id===S.editId));b.update(ref,{...d,updatedAt:serverTimestamp()});audit(b,'RECORD_UPDATE',S.editId,prev,d);await b.commit();S.editId=null;toast('Record updated');S.saving=false;go('records');return}
+  const ref=doc(collection(db,REC));
+  b.set(ref,{...d,recordId:ref.id,recordedBy:S.user.email,uid:S.user.uid,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});audit(b,'RECORD_CREATE',ref.id,null,d);await b.commit();
+  S.saving=false;render();msg('Record saved successfully.',1);
+ }catch(x){console.error(x);msg('Could not save: '+(x.code||x.message),0)}
+ S.saving=false;btn.disabled=false}
+
+/* ============ 8. RECORDS HISTORY ============ */
+function pRec(r,d){
+ const {k,d:dir}=S.sort;d=[...d].sort((a,b)=>{const x=k==='date'?a.date.localeCompare(b.date):a.scrapQty-b.scrapQty;return x*dir||b.date.localeCompare(a.date)});
+ const PS=20,pages=Math.max(1,Math.ceil(d.length/PS));S.page=Math.min(S.page,pages);const rows=d.slice((S.page-1)*PS,S.page*PS);
+ const ar=x=>S.sort.k===x?(S.sort.d>0?' ▲':' ▼'):'';
+ r.innerHTML=`<div class="card"><div class="row noprint" style="margin-bottom:10px"><button class="btn sm" data-a="exp" data-t="xlsx"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn sm" data-a="exp" data-t="csv"><i class="fa-solid fa-file-csv"></i> CSV</button><button class="btn sec sm" data-a="print"><i class="fa-solid fa-print"></i> Print</button><span style="margin-left:auto;color:var(--mut)">${d.length} records</span></div>
+ <div class="tw"><table><thead><tr><th data-a="sort" data-k="date">Date${ar('date')}</th><th>Machine No.</th><th>Shift</th><th>Item</th><th>Material</th><th data-a="sort" data-k="qty">Scrap Qty${ar('qty')}</th><th>V/C Ratio</th><th>Recorded By</th>${isAdmin()?'<th class="noprint">Actions</th>':''}</tr></thead><tbody>
+ ${rows.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.machineNo)}</td><td>${esc(x.shift)}</td><td>${esc(x.item)}</td><td>${esc(x.material)}</td><td>${x.scrapQty}</td><td>${esc(x.vcRatio)}</td><td>${esc(x.recordedBy)}</td>${isAdmin()?`<td class="noprint"><button class="btn sec sm" data-a="edit" data-id="${x.id}">Edit</button> <button class="btn red sm" data-a="del" data-id="${x.id}">Delete</button></td>`:''}</tr>`).join('')||'<tr><td colspan="9">No records match. Adjust the filters or record new damage.</td></tr>'}</tbody></table></div>
+ <div class="row noprint" style="margin-top:10px;justify-content:center"><button class="btn sec sm" data-a="pg" data-p="${S.page-1}" ${S.page<=1?'disabled':''}>Prev</button><span>Page ${S.page} of ${pages}</span><button class="btn sec sm" data-a="pg" data-p="${S.page+1}" ${S.page>=pages?'disabled':''}>Next</button></div></div>`}
+function exportRecs(t){
+ const d=filt().map(x=>({Date:x.date,'Machine No.':x.machineNo,Shift:x.shift,Item:x.item,Material:x.material,'Scrap Qty':x.scrapQty,'V/C Ratio':x.vcRatio,'Recorded By':x.recordedBy}));
+ if(!d.length)return toast('No records to export');
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(d),'Records');XLSX.writeFile(wb,'moulding_damage_'+fmt(new Date())+'.'+t,t==='csv'?{bookType:'csv'}:undefined)}
+async function delRec(id){
+ if(!isAdmin()||!confirm('Delete this record permanently?'))return;
+ try{const b=writeBatch(db);b.delete(doc(db,REC,id));audit(b,'RECORD_DELETE',id,clean(S.recs.find(x=>x.id===id)),null);await b.commit();toast('Record deleted')}catch(x){fail(x)}}
+
+/* ============ 9. ANALYSIS ============ */
+const wk=s=>{const t=new Date(s+'T00:00');t.setDate(t.getDate()-(t.getDay()+6)%7);return fmt(t)};
+function pAna(r,d){
+ const G=[['item','Item-wise','item'],['machineNo','Machine-wise','machine'],['shift','Shift-wise','shift'],['material','Material-wise','material'],['vcRatio','V/C Ratio','V/C ratio']];
+ const P=F.period||'day';
+ r.innerHTML=`<div class="charts">${G.map(g=>{const s=sumBy(d,g[0]);return `<div class="card"><h3>${g[1]} scrap quantity</h3><div class="cv"><canvas id="c_${g[0]}"></canvas></div><p style="font-size:13px;color:var(--mut);margin:8px 0 0">${s.length?`Highest ${g[2]}: <b>${esc(s[0][0])}</b> (${s[0][1]}). Ranking: ${s.slice(0,5).map((x,i)=>`${i+1}. ${esc(x[0])} (${x[1]})`).join(', ')}`:'No data'}</p></div>`}).join('')}
+ <div class="card" style="grid-column:1/-1"><div class="row"><h3 style="margin:0">Scrap trend</h3><select data-f="period" style="width:auto"><option value="day" ${P==='day'?'selected':''}>Daily</option><option value="week" ${P==='week'?'selected':''}>Weekly (Mon start)</option><option value="month" ${P==='month'?'selected':''}>Monthly</option></select></div><div class="cv"><canvas id="c_trend"></canvas></div></div></div>
+ <button class="btn sec noprint" data-a="print"><i class="fa-solid fa-print"></i> Print report</button>`;
+ const mk=(id,type,labels,data,color)=>charts.push(new Chart($('#'+id),{type,data:{labels,datasets:[{label:'Scrap Qty',data,backgroundColor:color||'#1e3a8a',borderColor:'#2563eb',tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}}));
+ G.forEach(g=>{const s=sumBy(d,g[0]);mk('c_'+g[0],'bar',s.map(x=>x[0]),s.map(x=>x[1]))});
+ const o={};d.forEach(x=>{const k=P==='day'?x.date:P==='week'?wk(x.date):x.date.slice(0,7);o[k]=(o[k]||0)+x.scrapQty});
+ const ks=Object.keys(o).sort();mk('c_trend','line',ks,ks.map(k=>o[k]),'#bcd0f5')}
+
+/* ============ 10. ADMIN: MASTER DATA ============ */
+function vAdmin(){
+ return `<p style="color:var(--mut)">Changes update every employee's dropdowns instantly. Existing records keep their original values. User roles are assigned in Firebase (users collection).</p>`+Object.entries(M).map(([c,m])=>`<div class="card"><h2>${m.t}</h2>
+ <form class="row" data-md="${c}" style="margin-bottom:10px">${m.code?'<input name="code" placeholder="Code" style="flex:1;min-width:120px">':''}<input name="name" placeholder="${m.code?'Name':'Value'}" required style="flex:2;min-width:150px"><button class="btn" type="submit">Add</button></form>
+ <div class="tw"><table><thead><tr><th>${m.code?'Code':''}</th><th>Name</th><th>Status</th><th>Actions</th></tr></thead><tbody>${S.md[c].map(x=>`<tr><td>${esc(x.code||'')}</td><td>${esc(x.name)}</td><td><span class="pill ${x.status==='active'?'':'off'}">${x.status}</span></td><td><button class="btn sec sm" data-a="mdedit" data-c="${c}" data-id="${x.id}">Edit</button> <button class="btn sec sm" data-a="mdtog" data-c="${c}" data-id="${x.id}">${x.status==='active'?'Deactivate':'Activate'}</button></td></tr>`).join('')||'<tr><td colspan="4">Nothing added yet.</td></tr>'}</tbody></table></div></div>`).join('')}
+const dup=(c,code,name,self)=>S.md[c].some(x=>x.id!==self&&(x.name.toLowerCase()===name.toLowerCase()&&(x.code||'').toLowerCase()===(code||'').toLowerCase()||(code&&(x.code||'').toLowerCase()===code.toLowerCase())));
+async function mdAdd(f){
+ const c=f.dataset.md,name=f.name.value.trim(),code=f.code?f.code.value.trim():'';
+ if(!name)return toast('Name is required');if(dup(c,code,name))return toast('Duplicate entry – already exists');
+ try{const b=writeBatch(db),ref=doc(collection(db,c)),data={name,status:'active'};if(M[c].code)data.code=code;
+  b.set(ref,{...data,[c+'Id']:ref.id,createdAt:serverTimestamp()});audit(b,'MASTER_CREATE:'+c,ref.id,null,data);await b.commit();toast('Added')}catch(x){fail(x)}}
+async function mdEdit(c,id){
+ const x=S.md[c].find(y=>y.id===id),name=prompt('Name',x.name);if(name===null)return;
+ let code=x.code||'';if(M[c].code){code=prompt('Code',code);if(code===null)return}
+ if(!name.trim())return toast('Name is required');if(dup(c,code.trim(),name.trim(),id))return toast('Duplicate entry – already exists');
+ try{const b=writeBatch(db),n={name:name.trim()};if(M[c].code)n.code=code.trim();b.update(doc(db,c,id),n);audit(b,'MASTER_UPDATE:'+c,id,{name:x.name,code:x.code||''},n);await b.commit();toast('Updated')}catch(e){fail(e)}}
+async function mdTog(c,id){
+ const x=S.md[c].find(y=>y.id===id),s=x.status==='active'?'inactive':'active';
+ try{const b=writeBatch(db);b.update(doc(db,c,id),{status:s});audit(b,(s==='inactive'?'MASTER_DEACTIVATE:':'MASTER_ACTIVATE:')+c,id,{status:x.status},{status:s});await b.commit()}catch(e){fail(e)}}
+
+/* ============ 11. AUDIT TRAIL ============ */
+function vAudit(){
+ return `<div class="card"><div class="tw"><table><thead><tr><th>Date & time</th><th>User</th><th>Action</th><th>Record ID</th><th>Previous value</th><th>Updated value</th></tr></thead><tbody>${S.audit.map(a=>`<tr><td>${a.at?esc(a.at.toDate().toLocaleString()):'…'}</td><td>${esc(a.userEmail||a.userId)}</td><td>${esc(a.action)}</td><td>${esc(a.recordId)}</td><td style="white-space:normal;max-width:260px;overflow-wrap:anywhere">${esc(a.previous)}</td><td style="white-space:normal;max-width:260px;overflow-wrap:anywhere">${esc(a.updated)}</td></tr>`).join('')||'<tr><td colspan="6">No audit entries yet.</td></tr>'}</tbody></table></div><p style="color:var(--mut);font-size:13px">Showing the latest 300 entries. Entries are read-only.</p></div>`}
+
+/* ============ 12. EVENTS ============ */
+document.addEventListener('click',e=>{
+ const v=e.target.closest('[data-v]');if(v)return go(v.dataset.v);
+ const a=e.target.closest('[data-a]');if(!a)return;const D=a.dataset;
+ ({logout:()=>signOut(auth),fclr:()=>{F={};render()},reset:()=>{const ed=!!S.editId;S.editId=null;go(ed?'records':'entry')},
+  sort:()=>{S.sort={k:D.k,d:S.sort.k===D.k?-S.sort.d:-1};paint()},pg:()=>{S.page=+D.p;paint()},exp:()=>exportRecs(D.t),print:()=>window.print(),
+  edit:()=>{S.editId=D.id;go('entry')},del:()=>delRec(D.id),mdedit:()=>mdEdit(D.c,D.id),mdtog:()=>mdTog(D.c,D.id)})[D.a]?.();
+});
+document.addEventListener('submit',e=>{e.preventDefault();if(e.target.id==='ef')saveRec(e.target);else if(e.target.dataset.md)mdAdd(e.target)});
+['input','change'].forEach(t=>document.addEventListener(t,e=>{const k=e.target.dataset?.f;if(!k||(t==='input'&&e.target.tagName==='SELECT'))return;F[k]=e.target.value;S.page=1;paint()}));
+$('#burger').addEventListener('click',()=>$('#side').classList.toggle('open'));
+</script></body></html>
