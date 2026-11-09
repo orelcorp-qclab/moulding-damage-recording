@@ -173,7 +173,13 @@ function vEntry(){
  <div class="fg"><div><label for="e_date">Date *</label><input id="e_date" name="date" type="date" required value="${e?e.date:fmt(new Date())}"></div>
  ${sel('machine','Machine No.','machines',e&&e.machineNo)}${sel('shift','Shift','shifts',e&&e.shift)}${sel('item','Item','items',e&&e.item)}${sel('material','Material','materials',e&&e.material)}
  <div><label for="e_qty">Scrap Qty *</label><input id="e_qty" name="qty" type="number" inputmode="numeric" min="0" step="1" required value="${e?e.scrapQty:''}"></div>
- ${sel('vc','V/C Ratio','vc_ratios',e&&e.vcRatio)}</div><div id="msg" class="msg" hidden></div>
+ ${sel('vc','V/C Ratio','vc_ratios',e&&e.vcRatio)}</div>
+ <div id="remark_wrap" style="margin-top:12px;${e&&e.scrapQty>250?'':'display:none;'}">
+ <label for="e_remark">Comment / Remark <span style="color:var(--err)">*</span></label>
+ <textarea id="e_remark" name="remark" rows="3" placeholder="Explain why scrap quantity is above 250..." ${e&&e.scrapQty>250?'required':''}>${e?esc(e.remark||''):''}</textarea>
+ <small style="color:var(--mut)">A comment is required when Scrap Qty is greater than 250.</small>
+ </div>
+ <div id="msg" class="msg" hidden></div>
  <div class="row" style="margin-top:14px"><button class="btn" type="submit" style="flex:1">${e?'Update record':'Save record'}</button><button class="btn sec" type="button" data-a="reset">${e?'Cancel':'Clear form'}</button></div></form>`}
 async function saveRec(f){
  if(S.saving)return;
@@ -182,6 +188,8 @@ async function saveRec(f){
  if(er.length)return msg('Please complete: '+er.join(', '),0);
  if(!/^\d+$/.test(f.qty.value.trim()))return msg('Scrap Qty must be a whole number, 0 or more.',0);
  d.scrapQty=parseInt(f.qty.value,10);
+ d.remark=(d.scrapQty>250)?f.remark.value.trim():'';
+ if(d.scrapQty>250&&!d.remark)return msg('Please enter a comment / remark because Scrap Qty is higher than 250.',0);
  const btn=f.querySelector('[type=submit]');S.saving=true;btn.disabled=true;
  try{const b=writeBatch(db);
   if(S.editId){const ref=doc(db,REC,S.editId),prev=clean(S.recs.find(x=>x.id===S.editId));b.update(ref,{...d,updatedAt:serverTimestamp()});audit(b,'RECORD_UPDATE',S.editId,prev,d);await b.commit();S.editId=null;toast('Record updated');S.saving=false;go('records');return}
@@ -197,11 +205,11 @@ function pRec(r,d){
  const PS=20,pages=Math.max(1,Math.ceil(d.length/PS));S.page=Math.min(S.page,pages);const rows=d.slice((S.page-1)*PS,S.page*PS);
  const ar=x=>S.sort.k===x?(S.sort.d>0?' ▲':' ▼'):'';
  r.innerHTML=`<div class="card"><div class="row noprint" style="margin-bottom:10px"><button class="btn sm" data-a="exp" data-t="xlsx"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn sm" data-a="exp" data-t="csv"><i class="fa-solid fa-file-csv"></i> CSV</button><button class="btn sec sm" data-a="print"><i class="fa-solid fa-print"></i> Print</button><span style="margin-left:auto;color:var(--mut)">${d.length} records</span></div>
- <div class="tw"><table><thead><tr><th data-a="sort" data-k="date">Date${ar('date')}</th><th>Machine No.</th><th>Shift</th><th>Item</th><th>Material</th><th data-a="sort" data-k="qty">Scrap Qty${ar('qty')}</th><th>V/C Ratio</th><th>Recorded By</th>${isAdmin()?'<th class="noprint">Actions</th>':''}</tr></thead><tbody>
- ${rows.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.machineNo)}</td><td>${esc(x.shift)}</td><td>${esc(x.item)}</td><td>${esc(x.material)}</td><td>${x.scrapQty}</td><td>${esc(x.vcRatio)}</td><td>${esc(x.recordedBy)}</td>${isAdmin()?`<td class="noprint"><button class="btn sec sm" data-a="edit" data-id="${x.id}">Edit</button> <button class="btn red sm" data-a="del" data-id="${x.id}">Delete</button></td>`:''}</tr>`).join('')||'<tr><td colspan="9">No records match. Adjust the filters or record new damage.</td></tr>'}</tbody></table></div>
+ <div class="tw"><table><thead><tr><th data-a="sort" data-k="date">Date${ar('date')}</th><th>Machine No.</th><th>Shift</th><th>Item</th><th>Material</th><th data-a="sort" data-k="qty">Scrap Qty${ar('qty')}</th><th>V/C Ratio</th><th>Comment / Remark</th><th>Recorded By</th>${isAdmin()?'<th class="noprint">Actions</th>':''}</tr></thead><tbody>
+ ${rows.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.machineNo)}</td><td>${esc(x.shift)}</td><td>${esc(x.item)}</td><td>${esc(x.material)}</td><td>${x.scrapQty}</td><td>${esc(x.vcRatio)}</td><td>${esc(x.remark||'–')}</td><td>${esc(x.recordedBy)}</td>${isAdmin()?`<td class="noprint"><button class="btn sec sm" data-a="edit" data-id="${x.id}">Edit</button> <button class="btn red sm" data-a="del" data-id="${x.id}">Delete</button></td>`:''}</tr>`).join('')||'<tr><td colspan="10">No records match. Adjust the filters or record new damage.</td></tr>'}</tbody></table></div>
  <div class="row noprint" style="margin-top:10px;justify-content:center"><button class="btn sec sm" data-a="pg" data-p="${S.page-1}" ${S.page<=1?'disabled':''}>Prev</button><span>Page ${S.page} of ${pages}</span><button class="btn sec sm" data-a="pg" data-p="${S.page+1}" ${S.page>=pages?'disabled':''}>Next</button></div></div>`}
 function exportRecs(t){
- const d=filt().map(x=>({Date:x.date,'Machine No.':x.machineNo,Shift:x.shift,Item:x.item,Material:x.material,'Scrap Qty':x.scrapQty,'V/C Ratio':x.vcRatio,'Recorded By':x.recordedBy}));
+ const d=filt().map(x=>({Date:x.date,'Machine No.':x.machineNo,Shift:x.shift,Item:x.item,Material:x.material,'Scrap Qty':x.scrapQty,'V/C Ratio':x.vcRatio,'Comment / Remark':x.remark||'','Recorded By':x.recordedBy}));
  if(!d.length)return toast('No records to export');
  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(d),'Records');XLSX.writeFile(wb,'moulding_damage_'+fmt(new Date())+'.'+t,t==='csv'?{bookType:'csv'}:undefined)}
 async function delRec(id){
@@ -254,6 +262,13 @@ document.addEventListener('click',e=>{
   edit:()=>{S.editId=D.id;go('entry')},del:()=>delRec(D.id),mdedit:()=>mdEdit(D.c,D.id),mdtog:()=>mdTog(D.c,D.id)})[D.a]?.();
 });
 document.addEventListener('submit',e=>{e.preventDefault();if(e.target.id==='ef')saveRec(e.target);else if(e.target.dataset.md)mdAdd(e.target)});
+document.addEventListener('input',e=>{
+ if(e.target.id==='e_qty'){
+  const wrap=$('#remark_wrap'),remark=$('#e_remark'),qty=parseInt(e.target.value,10)||0;
+  const show=qty>250;wrap.style.display=show?'block':'none';remark.required=show;
+  if(!show)remark.value='';
+ }
+});
 ['input','change'].forEach(t=>document.addEventListener(t,e=>{const k=e.target.dataset?.f;if(!k||(t==='input'&&e.target.tagName==='SELECT'))return;F[k]=e.target.value;S.page=1;paint()}));
 $('#burger').addEventListener('click',()=>$('#side').classList.toggle('open'));
 </script></body></html>
